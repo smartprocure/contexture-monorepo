@@ -7,18 +7,24 @@ export let hasSome = (keys, obj) => _.some(F.hasIn(obj), keys)
 
 // Sets up basic event emitter/listener registry with an array of listeners per topic
 //  e.g. listeners: { topic1: [fn1, fn2, ...], topic2: [...], ... }
-export let eventEmitter = (listeners = {}) => ({
-  listeners,
-  emit: (topic, ...args) => _.over(listeners[topic])(...args),
-  on(topic, fn) {
+// Also emit on a special symbol for all topics
+let allTopics = Symbol('allTopics')
+export let eventEmitter = (listeners = {}) => {
+  let emit = (topic, ...args) => {
+    _.over(listeners[topic])(...args)
+    _.over(listeners[allTopics])(topic, ...args)
+  }
+  let on = (topic, fn) => {
     if (!listeners[topic]) listeners[topic] = []
     listeners[topic].push(fn)
     // unlisten
     return () => {
       listeners[topic] = _.without(fn, listeners[topic])
     }
-  },
-})
+  }
+  let onAny = (fn) => on(allTopics, fn)
+  return { listeners, emit, on, onAny }
+}
 
 export let transformTreePostOrder = (next = F.traverse) =>
   _.curry((f, x) => {
