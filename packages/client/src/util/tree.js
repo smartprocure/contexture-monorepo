@@ -28,3 +28,6 @@ export let postWalkBranches = (fn) =>
       if (Tree.traverse(node)) fn(node, ...args)
     }
   )
+
+export let anyLeaves = _.curry((fn, node) => _.some(fn, Tree.leaves(node)))
+export let allLeaves = _.curry((fn, node) => _.every(fn, Tree.leaves(node)))

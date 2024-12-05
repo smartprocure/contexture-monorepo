@@ -1,6 +1,6 @@
 import _ from 'lodash/fp.js'
 import F from 'futil'
-import { Tree, encode } from './util/tree.js'
+import { Tree, encode, anyLeaves, allLeaves } from './util/tree.js'
 import {
   runTypeFunction,
   runTypeFunctionOrDefault,
@@ -32,6 +32,8 @@ export let internalStateKeys = [
   'forceReplaceResponse',
   'expand',
   'collapse',
+  'someError',
+  'everyPaused',
 ]
 
 export let autoKey = (x) => F.compactJoin('-', [x.field, x.type]) || 'node'
@@ -50,6 +52,10 @@ export let initNode = _.curry((actionProps, dedupe, parentPath, node) => {
     ..._.omit(_.keys(node), snapshot(getTypeProp(types, 'defaults', node))),
     key,
     path: [...parentPath, key],
+    ...(node.children && {
+      someError: () => anyLeaves('error', node),
+      everyPaused: () => allLeaves('paused', node),
+    }),
   })
 })
 

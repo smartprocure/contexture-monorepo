@@ -1,6 +1,6 @@
 import _ from 'lodash/fp.js'
 import F from 'futil'
-import { encode, Tree } from '../util/tree.js'
+import { encode, Tree, anyLeaves, allLeaves } from '../util/tree.js'
 import { getTypeProp } from '../types.js'
 import wrap from './wrap.js'
 import { dedupeWalk } from '../node.js'
@@ -129,8 +129,9 @@ export default (config) => {
   let pauseNested = (path) => mutateNested(path, { paused: true })
   let unpauseNested = (path) => mutateNested(path, { paused: false })
 
-  let nodeLeaves = _.flow(getNode, Tree.leaves)
-  let isPausedNested = _.flow(nodeLeaves, _.every('paused'))
+  let anyPathLeaves = (path, fn) => anyLeaves(fn, getNode(path))
+  let allPathLeaves = (path, fn) => allLeaves(fn, getNode(path))
+  let isPausedNested = (path) => allPathLeaves(path, 'paused')
 
   return {
     add,
@@ -145,5 +146,7 @@ export default (config) => {
     isPausedNested,
     pauseNested,
     unpauseNested,
+    allLeaves: allPathLeaves,
+    anyLeaves: anyPathLeaves,
   }
 }
