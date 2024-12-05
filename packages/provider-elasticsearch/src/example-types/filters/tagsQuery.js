@@ -3,8 +3,6 @@ import F from 'futil'
 import { Permutation } from 'js-combinatorics'
 import { stripLegacySubFields } from '../../utils/fields.js'
 import { sanitizeTagInputs } from 'contexture-util/keywordGenerations.js'
-import { queryStringCharacterBlacklist } from 'contexture-util/exampleTypes/tagsQuery.js'
-import escapeStringRegexp from 'escape-string-regexp'
 
 let maxTagCount = 100
 
@@ -17,79 +15,53 @@ let wordPermutations = _.flow(
   _.map(_.join(' '))
 )
 
-/*
- * Quote phrases and set edit distance.
- * See: https://www.elastic.co/guide/en/elasticsearch/reference/current/query-dsl-query-string-query.html#_fuzziness
- */
-let addQuotesAndDistance = _.curry((tag, text) => {
-  // Multiple words
-  if (_.includes(' ', text)) {
-    return F.quote(text) + (tag.distance ? `~${tag.distance}` : '')
-  }
-  // Single word.
-  // Note: ~1 for misspellings allows for the insertion, deletion or substitution of a single character, or transposition of two adjacent characters.
-  return text + (tag.misspellings ? '~1' : '')
-})
-
-let replaceRegexp = new RegExp(
-  `[${escapeStringRegexp(queryStringCharacterBlacklist)}]`,
-  'g'
-)
-
-let replaceReservedChars = _.flow(
-  _.toString,
-  _.replace(replaceRegexp, ' '),
-  // These characters are not stripped out by our analyzers but they are
-  // `query_string` reserved characters so we need to escape them.
-  _.replace(/([&+\-=:/])/g, '\\$1')
-)
-
-let tagToQueryString = (tag) => {
-  let _tag = replaceReservedChars(tag.word)
-
-  if (tag.distance === 'unlimited') {
-    return F.parens(_tag.replace(/\s+/g, ' AND '))
-  } else if (!tag.distance && tag.anyOrder) {
-    return _.flow(
-      wordPermutations,
-      _.map(addQuotesAndDistance(tag)),
-      _.join(' OR '),
-      F.parens
-    )(_tag)
-  } else {
-    return addQuotesAndDistance(tag, _tag)
-  }
-}
-
-let joinTags = _.curry((join, tags) => {
-  if (!tags.length) return ''
-
-  let separator = { all: ' AND ', any: ' OR ' }[join] || ' OR '
-  let joinedTags = tags.join(separator)
-
-  if (join === 'none') return `NOT (${joinedTags})`
-  return joinedTags
-})
-
-let limitResultsToCertainTags = _.find('onlyShowTheseResults')
-
-let tagsToQueryString = (tags, join) =>
-  _.flow(
-    F.when(limitResultsToCertainTags, _.filter('onlyShowTheseResults')),
-    F.compactMap(tagToQueryString),
-    joinTags(join)
-  )(tags)
-
 let hasValue = _.get('tags.length')
 
-let filter = ({ tags, join, field, exact }) => ({
-  query_string: {
-    query: tagsToQueryString(tags, join),
-    default_operator: 'AND',
-    default_field: stripLegacySubFields(field) + (exact ? '.exact' : ''),
-    ...(exact && { analyzer: 'exact' }),
+let filterIfFind = (f) => F.when(_.find(f), _.filter(f))
+let joinMap = { all: 'must', any: 'should', none: 'must_not' }
+let combinator = (join, filters) => ({
+  bool: {
+    [joinMap[join]]: filters,
+    ...(join === 'any' && { minimum_should_match: 1 }),
   },
 })
+let tagMapper = (field, exact) => (tag) => {
+  let queryType = _.includes(' ', tag.word) ? 'match_phrase' : 'match'
+  let queryField = stripLegacySubFields(field) + (exact ? '.exact' : '')
+
+  let body = {
+    query: tag.word,
+    ...(tag.misspellings && { fuzziness: 1 }), // consider switching to 'AUTO'
+    ...(tag.distance && tag.distance !== 'unlimited' && { slop: tag.distance }),
+    ...(exact && { analyzer: 'exact' }),
+  }
+  if (tag.distance === 'unlimited')
+    body.query = tag.word.replace(/\s+/g, ' AND ')
+
+  if (!tag.distance && tag.anyOrder) {
+    return combinator(
+      'any',
+      _.map(
+        (query) => ({
+          match_phrase: {
+            [queryField]: { query, ...(exact && { analyzer: 'exact' }) },
+          },
+        }),
+        wordPermutations(tag.word)
+      )
+    )
+  }
+
+  return { [queryType]: { [queryField]: body } }
+}
+let filter = ({ tags, join = 'any', field, exact }) =>
+  combinator(
+    join,
+    _.flow(
+      filterIfFind('onlyShowTheseResults'),
+      _.map(tagMapper(field, exact))
+    )(tags)
+  )
 
 let buildResultQuery = (
   node,
@@ -162,12 +134,6 @@ let validContext = (node) => {
 
 export default ({ generateKeywords } = {}) => ({
   wordPermutations,
-  limitResultsToCertainTags,
-  addQuotesAndDistance,
-  replaceReservedChars,
-  tagToQueryString,
-  joinTags,
-  tagsToQueryString,
   hasValue,
   filter,
   validContext,
